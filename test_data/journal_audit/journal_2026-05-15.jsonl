@@ -1,0 +1,1 @@
+{"sequence":1,"timestamp_ns":1778876683026375200,"entry_type":"audit","payload":{"action":"kill_switch_activated","actor":{"human":{"user_id":"test_user"}},"after_state":null,"before_state":null,"id":"90a18bb6-57cf-4bfa-b331-cd84535f7511","outcome":"success","reason":"Test activation","target":null,"timestamp_ns":1778876683026375200,"trace_id":null},"checksum":null}

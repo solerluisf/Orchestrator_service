@@ -1,0 +1,1 @@
+{"sequence":1,"timestamp_ns":1778876683719983400,"entry_type":"kill_switch_activate","payload":{"action":"activate","actor":"test","reason":"Test","timestamp_ns":1778876683719983400},"checksum":null}
