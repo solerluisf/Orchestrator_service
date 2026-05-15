@@ -3,6 +3,7 @@ pub mod command_handler;
 pub mod event_router;
 pub mod health_aggregator;
 pub mod kill_switch_controller;
+pub mod leader_election;
 pub mod mode_controller;
 pub mod named_sagas;
 pub mod orchestrator_service;

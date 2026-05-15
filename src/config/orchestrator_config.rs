@@ -26,6 +26,15 @@ pub struct OrchestratorConfig {
 
     #[serde(default)]
     pub policies: PolicyConfig,
+
+    #[serde(default)]
+    pub tls_cert_path: Option<String>,
+
+    #[serde(default)]
+    pub tls_key_path: Option<String>,
+
+    #[serde(default = "default_jwt_secret")]
+    pub jwt_secret: String,
 }
 
 fn default_http_addr() -> SocketAddr {
@@ -46,6 +55,10 @@ fn default_health_poll_interval_secs() -> u64 {
 
 fn default_command_channel_size() -> usize {
     1000
+}
+
+fn default_jwt_secret() -> String {
+    "orchestrator-secret-change-me".to_string()
 }
 
 impl OrchestratorConfig {
@@ -74,6 +87,9 @@ impl Default for OrchestratorConfig {
             command_channel_size: default_command_channel_size(),
             services: Vec::new(),
             policies: PolicyConfig::default(),
+            tls_cert_path: None,
+            tls_key_path: None,
+            jwt_secret: default_jwt_secret(),
         }
     }
 }

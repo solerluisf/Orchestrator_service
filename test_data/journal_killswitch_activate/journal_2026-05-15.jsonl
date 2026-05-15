@@ -1,1 +1,1 @@
-{"sequence":1,"timestamp_ns":1778879285785019200,"entry_type":"kill_switch_activate","payload":{"action":"activate","actor":"test_user","reason":"Test activation","timestamp_ns":1778879285785019200},"checksum":null}
+{"sequence":1,"timestamp_ns":1778888864027083500,"entry_type":"kill_switch_activate","payload":{"action":"activate","actor":"test_user","reason":"Test activation","timestamp_ns":1778888864027083500},"checksum":null}

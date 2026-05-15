@@ -1,6 +1,7 @@
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
+    middleware,
     response::IntoResponse,
     routing::{get, post},
     Json, Router,
@@ -13,14 +14,18 @@ use tower_http::cors::CorsLayer;
 use crate::core::domain::commands::OrchestratorCommand;
 use crate::core::domain::operation_mode::OperationMode;
 use crate::core::domain::policy::PolicyParameters;
+use crate::config::OrchestratorConfig;
 
 pub struct AppState {
     pub orchestrator: Arc<crate::core::application::orchestrator_service::OrchestratorService>,
+    pub jwt_config: crate::infra::auth::JwtConfig,
 }
 
 pub async fn run(addr: SocketAddr) -> anyhow::Result<()> {
+    let config = OrchestratorConfig::load().unwrap_or_default();
+
     let journal = Arc::new(
-        crate::adapters::persistence::journal_adapter::AppendOnlyJournalAdapter::new("./data/journal")
+        crate::adapters::persistence::journal_adapter::AppendOnlyJournalAdapter::new(&config.journal_path)
             .map_err(|e| anyhow::anyhow!(e))?,
     );
 
@@ -29,8 +34,12 @@ pub async fn run(addr: SocketAddr) -> anyhow::Result<()> {
         crate::adapters::bus::bus_service_command::BusServiceCommandAdapter::new(event_bus.clone()),
     );
 
+    let health_endpoints: HashMap<String, String> = config.services.iter()
+        .filter_map(|s| s.health_endpoint.as_ref().map(|h| (s.id.clone(), h.clone())))
+        .collect();
+
     let health_port = Arc::new(
-        crate::adapters::health::http_health_adapter::HttpHealthAdapter::new(HashMap::new()),
+        crate::adapters::health::http_health_adapter::HttpHealthAdapter::new(health_endpoints),
     );
 
     let metrics = Arc::new(crate::adapters::metrics::prometheus_adapter::PrometheusAdapter::new());
@@ -47,12 +56,19 @@ pub async fn run(addr: SocketAddr) -> anyhow::Result<()> {
 
     orchestrator.start().await?;
 
+    let jwt_config = crate::infra::auth::JwtConfig::default();
+
     let state = Arc::new(AppState {
         orchestrator: orchestrator.clone(),
+        jwt_config: jwt_config.clone(),
     });
 
+    let auth_state = crate::infra::auth::AuthState {
+        jwt_config: jwt_config.clone(),
+    };
+
     let app = Router::new()
-        // Health endpoints
+        // Health endpoints (no auth required)
         .route("/health", get(health_check))
         .route("/health/services", get(get_all_service_health))
         .route("/health/services/:service_id", get(get_service_health))
@@ -84,7 +100,10 @@ pub async fn run(addr: SocketAddr) -> anyhow::Result<()> {
         .route("/workflows/instances/:instance_id/cancel", post(cancel_workflow))
         // Config
         .route("/config", get(get_config))
+        // Auth
+        .route("/auth/token", post(generate_token))
         .layer(CorsLayer::permissive())
+        .layer(middleware::from_fn_with_state(auth_state, crate::infra::auth::auth_middleware))
         .with_state(state);
 
     tracing::info!("HTTP server listening on {}", addr);
@@ -93,6 +112,26 @@ pub async fn run(addr: SocketAddr) -> anyhow::Result<()> {
     axum::serve(listener, app).await?;
 
     Ok(())
+}
+
+async fn generate_token(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let user_id = body.get("user_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+    let role = body.get("role")
+        .and_then(|v| v.as_str())
+        .unwrap_or("viewer");
+
+    match crate::infra::auth::create_token(&state.jwt_config, user_id, role) {
+        Ok(token) => (StatusCode::OK, Json(serde_json::json!({"token": token}))),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        ),
+    }
 }
 
 async fn health_check() -> impl IntoResponse {

@@ -4,6 +4,12 @@ use clap::{Parser, Subcommand};
 #[command(name = "orchestrator-cli")]
 #[command(about = "Orchestrator Service CLI")]
 pub struct Cli {
+    #[arg(short, long, default_value = "http://127.0.0.1:9090")]
+    pub base_url: String,
+
+    #[arg(short, long)]
+    pub token: Option<String>,
+
     #[command(subcommand)]
     pub command: Commands,
 }
@@ -40,10 +46,20 @@ pub enum Commands {
         #[command(subcommand)]
         command: AuditCommands,
     },
+    /// Workflow commands
+    Workflow {
+        #[command(subcommand)]
+        command: WorkflowCommands,
+    },
     /// Config commands
     Config {
         #[command(subcommand)]
         command: Option<ConfigCommands>,
+    },
+    /// Authentication
+    Auth {
+        #[command(subcommand)]
+        command: AuthCommands,
     },
 }
 
@@ -58,6 +74,10 @@ pub enum HealthCommands {
         #[arg(short, long)]
         service_id: String,
     },
+    /// Show workflow instances
+    Workflows,
+    /// Show saga instances
+    Sagas,
 }
 
 #[derive(Subcommand)]
@@ -126,10 +146,28 @@ pub enum ServiceCommands {
         #[arg(short, long)]
         reason: Option<String>,
     },
-    /// Reset circuit breaker for a service
-    CircuitBreakerReset {
+    /// List all services
+    List,
+}
+
+#[derive(Subcommand)]
+pub enum WorkflowCommands {
+    /// List available workflows
+    List,
+    /// Trigger a workflow
+    Trigger {
         #[arg(short, long)]
-        service_id: String,
+        workflow_id: String,
+    },
+    /// Get workflow instance status
+    Status {
+        #[arg(short, long)]
+        instance_id: String,
+    },
+    /// Cancel a workflow
+    Cancel {
+        #[arg(short, long)]
+        instance_id: String,
     },
 }
 
@@ -152,11 +190,20 @@ pub enum AuditCommands {
 }
 
 #[derive(Subcommand)]
+pub enum AuthCommands {
+    /// Get a JWT token
+    Login {
+        #[arg(short, long, default_value = "admin")]
+        user_id: String,
+        #[arg(short, long, default_value = "admin")]
+        role: String,
+    },
+}
+
+#[derive(Subcommand)]
 pub enum ConfigCommands {
     /// Show current config
     Show,
     /// Reload config from manifest
     Reload,
-    /// Show config diff
-    Diff,
 }

@@ -1,1 +1,1 @@
-{"sequence":1,"timestamp_ns":1778879286331494400,"entry_type":"policy_updated","payload":{"parameters":{"values":{"max_drawdown_pct":5.0}},"policy_id":"drawdown"},"checksum":null}
+{"sequence":1,"timestamp_ns":1778888866454064900,"entry_type":"policy_updated","payload":{"parameters":{"values":{"max_drawdown_pct":5.0}},"policy_id":"drawdown"},"checksum":null}

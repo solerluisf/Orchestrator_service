@@ -5,6 +5,14 @@ edition = "2021"
 authors = ["Trading Platform Team"]
 description = "Orchestrator Service — Central nervous system of the event-driven trading platform"
 
+[[bin]]
+name = "orchestrator"
+path = "src/main.rs"
+
+[[bin]]
+name = "orchestrator-cli"
+path = "src/bin/cli.rs"
+
 [dependencies]
 # Async runtime
 tokio = { version = "1", features = ["full"] }
@@ -51,6 +59,10 @@ dotenvy = "0.15"
 # Cryptographic signing for audit
 hmac = "0.12"
 sha2 = "0.10"
+hex = "0.4"
+
+# JWT
+jsonwebtoken = "9"
 
 # Async traits
 async-trait = "0.1"

@@ -1,2 +1,2 @@
-{"sequence":1,"timestamp_ns":1778879285785086600,"entry_type":"kill_switch_activate","payload":{"action":"activate","actor":"test","reason":"Test","timestamp_ns":1778879285785086600},"checksum":null}
-{"sequence":2,"timestamp_ns":1778879285786763700,"entry_type":"kill_switch_clear","payload":{"action":"clear","actor":"test_user","reason":"Test clear","timestamp_ns":1778879285786763700},"checksum":null}
+{"sequence":1,"timestamp_ns":1778888864027169200,"entry_type":"kill_switch_activate","payload":{"action":"activate","actor":"test","reason":"Test","timestamp_ns":1778888864027169200},"checksum":null}
+{"sequence":2,"timestamp_ns":1778888864028729900,"entry_type":"kill_switch_clear","payload":{"action":"clear","actor":"test_user","reason":"Test clear","timestamp_ns":1778888864028729900},"checksum":null}

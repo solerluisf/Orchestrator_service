@@ -45,7 +45,7 @@ impl IServiceConnector for ModelConnector {
         }
     }
 
-    async fn send_command(&self, cmd: ServiceCommand) -> Result<ServiceAck, OrchestratorError> {
+    async fn send_command_inner(&self, cmd: ServiceCommand) -> Result<ServiceAck, OrchestratorError> {
         let payload = serde_json::to_vec(&cmd)
             .map_err(|e| OrchestratorError::SerializationError(e.to_string()))?;
         let response = self.event_bus
