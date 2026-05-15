@@ -7,7 +7,9 @@ use crate::core::application::kill_switch_controller::KillSwitchController;
 use crate::core::application::mode_controller::ModeController;
 use crate::core::application::policy_engine::PolicyEngine;
 use crate::core::application::query_handler::QueryHandler;
+use crate::core::application::saga_coordinator::SagaCoordinator;
 use crate::core::application::service_registry::ServiceRegistryService;
+use crate::core::application::workflow_engine::WorkflowEngine;
 use crate::core::domain::commands::{CommandAck, OrchestratorCommand};
 use crate::core::domain::errors::OrchestratorError;
 use crate::core::domain::health::HealthSnapshot;
@@ -25,6 +27,8 @@ pub struct OrchestratorService {
     query_handler: Arc<QueryHandler>,
     audit_trail: Arc<AuditTrail>,
     service_registry: Arc<ServiceRegistryService>,
+    workflow_engine: Arc<WorkflowEngine>,
+    saga_coordinator: Arc<SagaCoordinator>,
     command_tx: mpsc::Sender<(OrchestratorCommand, tokio::sync::oneshot::Sender<Result<CommandAck, OrchestratorError>>)>,
 }
 
@@ -70,6 +74,18 @@ impl OrchestratorService {
 
         let service_registry = Arc::new(ServiceRegistryService::new());
 
+        let workflow_engine = Arc::new(WorkflowEngine::new(
+            journal.clone(),
+            event_bus.clone(),
+        ));
+
+        let mut saga_coordinator = SagaCoordinator::new(
+            journal.clone(),
+            event_bus.clone(),
+        );
+        crate::core::application::named_sagas::register_all_named_sagas(&mut saga_coordinator);
+        let saga_coordinator = Arc::new(saga_coordinator);
+
         let (command_tx, _command_rx) = mpsc::channel(1000);
 
         Self {
@@ -80,6 +96,8 @@ impl OrchestratorService {
             query_handler,
             audit_trail,
             service_registry,
+            workflow_engine,
+            saga_coordinator,
             command_tx,
         }
     }
@@ -99,11 +117,11 @@ impl OrchestratorService {
     }
 
     pub async fn start(&self) -> Result<(), OrchestratorError> {
-        // Restore state from journal
         self.kill_switch.restore_from_journal().await?;
         self.mode_controller.restore_from_journal().await?;
+        self.workflow_engine.restore_from_journal().await?;
+        self.saga_coordinator.restore_from_journal().await?;
 
-        // Start health polling
         self.health_aggregator.start_polling().await;
 
         tracing::info!("Orchestrator service started");
@@ -132,5 +150,13 @@ impl OrchestratorService {
 
     pub fn service_registry(&self) -> &Arc<ServiceRegistryService> {
         &self.service_registry
+    }
+
+    pub fn workflow_engine(&self) -> &Arc<WorkflowEngine> {
+        &self.workflow_engine
+    }
+
+    pub fn saga_coordinator(&self) -> &Arc<SagaCoordinator> {
+        &self.saga_coordinator
     }
 }

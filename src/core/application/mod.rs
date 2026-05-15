@@ -4,6 +4,7 @@ pub mod event_router;
 pub mod health_aggregator;
 pub mod kill_switch_controller;
 pub mod mode_controller;
+pub mod named_sagas;
 pub mod orchestrator_service;
 pub mod policy_engine;
 pub mod query_handler;

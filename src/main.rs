@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
@@ -15,11 +16,25 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Starting Orchestrator Service");
 
     let config = orchestrator_service::config::OrchestratorConfig::load()?;
-    let addr = config.http_addr;
 
-    tracing::info!("HTTP server listening on {}", addr);
+    let broadcaster = orchestrator_service::infra::ws_server::TelemetryBroadcaster::new(256);
 
-    orchestrator_service::infra::http_server::run(addr).await?;
+    let http_addr = config.http_addr;
+    let ws_addr = config.ws_addr;
+
+    tracing::info!("HTTP server listening on {}", http_addr);
+    tracing::info!("WebSocket server listening on {}", ws_addr);
+
+    let ws_broadcaster = broadcaster.clone();
+    let ws_handle = tokio::spawn(async move {
+        if let Err(e) = orchestrator_service::infra::ws_server::run_ws_server(ws_addr, ws_broadcaster).await {
+            tracing::error!("WebSocket server error: {}", e);
+        }
+    });
+
+    orchestrator_service::infra::http_server::run(http_addr).await?;
+
+    ws_handle.abort();
 
     Ok(())
 }

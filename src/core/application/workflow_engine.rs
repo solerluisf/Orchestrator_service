@@ -38,7 +38,6 @@ impl WorkflowEngine {
 
         let instance = WorkflowInstance::new(workflow_id);
 
-        // Journal the start
         let event = WorkflowEvent::new(SystemEvent::WorkflowStarted {
             workflow_id: workflow_id.to_string(),
             instance_id: instance.instance_id.clone(),
@@ -78,13 +77,24 @@ impl WorkflowEngine {
 
         if instance.current_step >= definition.steps.len() {
             instance.state = WorkflowInstanceState::Completed;
+            let event = WorkflowEvent::new(SystemEvent::WorkflowCompleted {
+                instance_id: instance_id.to_string(),
+            });
+            let entry = JournalEntry {
+                sequence: None,
+                timestamp_ns: event.timestamp_ns,
+                entry_type: "workflow_completed".to_string(),
+                payload: serde_json::to_value(&event)
+                    .map_err(|e| OrchestratorError::SerializationError(e.to_string()))?,
+                checksum: None,
+            };
+            self.journal.append(entry).await?;
             return Ok(());
         }
 
         instance.current_step += 1;
         instance.updated_at_ns = now_nanos();
 
-        // Journal step completion
         let event = WorkflowEvent::new(SystemEvent::WorkflowStepCompleted {
             instance_id: instance_id.to_string(),
             step_index: instance.current_step,
@@ -99,6 +109,93 @@ impl WorkflowEngine {
         };
         self.journal.append(entry).await?;
 
+        Ok(())
+    }
+
+    pub async fn cancel_workflow(
+        &self,
+        instance_id: &str,
+    ) -> Result<(), OrchestratorError> {
+        let mut instances = self.instances.write().await;
+        let instance = instances.get_mut(instance_id).ok_or_else(|| {
+            OrchestratorError::WorkflowError(format!("Instance not found: {}", instance_id))
+        })?;
+
+        instance.state = WorkflowInstanceState::Failed {
+            reason: "Cancelled by operator".to_string(),
+        };
+        instance.updated_at_ns = now_nanos();
+
+        let event = WorkflowEvent::new(SystemEvent::WorkflowFailed {
+            instance_id: instance_id.to_string(),
+            reason: "Cancelled by operator".to_string(),
+        });
+        let entry = JournalEntry {
+            sequence: None,
+            timestamp_ns: event.timestamp_ns,
+            entry_type: "workflow_failed".to_string(),
+            payload: serde_json::to_value(&event)
+                .map_err(|e| OrchestratorError::SerializationError(e.to_string()))?,
+            checksum: None,
+        };
+        self.journal.append(entry).await?;
+
+        tracing::info!(instance_id = %instance_id, "Workflow cancelled");
+        Ok(())
+    }
+
+    pub async fn restore_from_journal(&self) -> Result<(), OrchestratorError> {
+        let entries = self.journal.read_latest(10000).await?;
+        let mut instances: HashMap<String, WorkflowInstance> = HashMap::new();
+
+        for entry in &entries {
+            if let Ok(workflow_event) = serde_json::from_value::<WorkflowEvent>(entry.payload.clone()) {
+                match &workflow_event.event {
+                    SystemEvent::WorkflowStarted { workflow_id, instance_id } => {
+                        instances.insert(
+                            instance_id.clone(),
+                            WorkflowInstance {
+                                instance_id: instance_id.clone(),
+                                workflow_id: workflow_id.clone(),
+                                current_step: 0,
+                                state: WorkflowInstanceState::Running,
+                                started_at_ns: workflow_event.timestamp_ns,
+                                updated_at_ns: workflow_event.timestamp_ns,
+                            },
+                        );
+                    }
+                    SystemEvent::WorkflowStepCompleted { instance_id, step_index } => {
+                        if let Some(instance) = instances.get_mut(instance_id) {
+                            instance.current_step = *step_index;
+                            instance.updated_at_ns = workflow_event.timestamp_ns;
+                        }
+                    }
+                    SystemEvent::WorkflowCompleted { instance_id } => {
+                        if let Some(instance) = instances.get_mut(instance_id) {
+                            instance.state = WorkflowInstanceState::Completed;
+                            instance.updated_at_ns = workflow_event.timestamp_ns;
+                        }
+                    }
+                    SystemEvent::WorkflowFailed { instance_id, reason } => {
+                        if let Some(instance) = instances.get_mut(instance_id) {
+                            instance.state = WorkflowInstanceState::Failed { reason: reason.clone() };
+                            instance.updated_at_ns = workflow_event.timestamp_ns;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        let count = instances.len();
+        let mut write_instances = self.instances.write().await;
+        for (id, instance) in instances {
+            write_instances.insert(id, instance);
+        }
+
+        if count > 0 {
+            tracing::info!(count = count, "Restored workflow instances from journal");
+        }
         Ok(())
     }
 

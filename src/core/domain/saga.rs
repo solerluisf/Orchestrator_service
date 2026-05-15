@@ -15,6 +15,8 @@ pub struct SagaStepDef {
     pub name: String,
     pub action: WorkflowAction,
     pub compensation: WorkflowAction,
+    #[serde(default)]
+    pub timeout_secs: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

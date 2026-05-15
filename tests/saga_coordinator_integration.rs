@@ -24,6 +24,7 @@ mod tests {
                         target_service: "strategy_service".to_string(),
                         command: serde_json::json!({"type": "resume"}),
                     },
+                    timeout_secs: None,
                 },
                 SagaStepDef {
                     name: "step2".to_string(),
@@ -35,6 +36,7 @@ mod tests {
                         target_service: "risk_service".to_string(),
                         command: serde_json::json!({"type": "resume"}),
                     },
+                    timeout_secs: None,
                 },
             ],
         }

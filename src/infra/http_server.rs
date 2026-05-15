@@ -56,6 +56,9 @@ pub async fn run(addr: SocketAddr) -> anyhow::Result<()> {
         .route("/health", get(health_check))
         .route("/health/services", get(get_all_service_health))
         .route("/health/services/:service_id", get(get_service_health))
+        .route("/health/workflows", get(get_workflow_instances))
+        .route("/health/sagas", get(get_saga_instances))
+        .route("/health/metrics", get(get_metrics))
         // Kill switch
         .route("/control/kill-switch/activate", post(activate_kill_switch))
         .route("/control/kill-switch/clear", post(clear_kill_switch))
@@ -74,6 +77,13 @@ pub async fn run(addr: SocketAddr) -> anyhow::Result<()> {
         .route("/control/services", get(get_all_services))
         .route("/control/services/:service_id/pause", post(pause_service))
         .route("/control/services/:service_id/resume", post(resume_service))
+        // Workflow management
+        .route("/workflows", get(list_workflows))
+        .route("/workflows/:workflow_id/trigger", post(trigger_workflow))
+        .route("/workflows/instances/:instance_id", get(get_workflow_instance))
+        .route("/workflows/instances/:instance_id/cancel", post(cancel_workflow))
+        // Config
+        .route("/config", get(get_config))
         .layer(CorsLayer::permissive())
         .with_state(state);
 
@@ -333,4 +343,94 @@ async fn resume_service(
             Json(serde_json::json!({"error": e.to_string()})),
         ),
     }
+}
+
+async fn get_workflow_instances(
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let instances = state.orchestrator.workflow_engine().list_instances().await;
+    Json(serde_json::to_value(instances).unwrap())
+}
+
+async fn get_saga_instances(
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let instances = state.orchestrator.saga_coordinator().list_instances().await;
+    Json(serde_json::to_value(instances).unwrap())
+}
+
+async fn get_metrics() -> impl IntoResponse {
+    Json(serde_json::json!({
+        "status": "metrics_endpoint_placeholder"
+    }))
+}
+
+async fn list_workflows() -> impl IntoResponse {
+    Json(serde_json::json!({
+        "workflows": [
+            {"id": "operation_mode_transition", "name": "Operation Mode Transition", "description": "Safe multi-service mode switch with compensation"},
+            {"id": "kill_switch_activation", "name": "Kill Switch Activation", "description": "Ordered shutdown with compensation"},
+            {"id": "service_restart", "name": "Service Restart", "description": "Drain, restart, reconcile"},
+            {"id": "policy_update", "name": "Policy Update", "description": "Propagate policy changes with rollback"},
+            {"id": "circuit_breaker_open", "name": "Circuit Breaker Open", "description": "Isolate a service and reroute"}
+        ]
+    }))
+}
+
+async fn trigger_workflow(
+    State(state): State<Arc<AppState>>,
+    Path(workflow_id): Path<String>,
+    Json(_body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    match state.orchestrator.workflow_engine().trigger_workflow(&workflow_id).await {
+        Ok(instance) => (StatusCode::CREATED, Json(serde_json::json!({
+            "instance_id": instance.instance_id,
+            "workflow_id": instance.workflow_id,
+            "state": format!("{:?}", instance.state),
+        }))),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        ),
+    }
+}
+
+async fn get_workflow_instance(
+    State(state): State<Arc<AppState>>,
+    Path(instance_id): Path<String>,
+) -> impl IntoResponse {
+    match state.orchestrator.workflow_engine().get_instance(&instance_id).await {
+        Some(instance) => (StatusCode::OK, Json(serde_json::to_value(instance).unwrap())),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Instance not found"})),
+        ),
+    }
+}
+
+async fn cancel_workflow(
+    State(state): State<Arc<AppState>>,
+    Path(instance_id): Path<String>,
+) -> impl IntoResponse {
+    match state.orchestrator.workflow_engine().cancel_workflow(&instance_id).await {
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({"status": "cancelled"}))),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        ),
+    }
+}
+
+async fn get_config(
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let mode = state.orchestrator.mode_controller().current_mode().await;
+    let kill_active = state.orchestrator.kill_switch().is_active();
+    let policies = state.orchestrator.policy_engine().list_policies().await;
+
+    Json(serde_json::json!({
+        "operation_mode": mode.to_string(),
+        "kill_switch_active": kill_active,
+        "policies": policies,
+    }))
 }

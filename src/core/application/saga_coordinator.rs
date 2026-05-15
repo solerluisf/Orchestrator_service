@@ -160,4 +160,66 @@ impl SagaCoordinator {
             })
             .collect()
     }
+
+    pub async fn get_instance(&self, instance_id: &str) -> Option<SagaInstance> {
+        let instances = self.instances.read().await;
+        instances.get(instance_id).cloned()
+    }
+
+    pub async fn restore_from_journal(&self) -> Result<(), OrchestratorError> {
+        let entries = self.journal.read_latest(10000).await?;
+        let mut instances: HashMap<String, SagaInstance> = HashMap::new();
+
+        for entry in &entries {
+            if let Ok(workflow_event) = serde_json::from_value::<WorkflowEvent>(entry.payload.clone()) {
+                match &workflow_event.event {
+                    SystemEvent::SagaStarted { saga_id, saga_type } => {
+                        instances.insert(
+                            saga_id.clone(),
+                            SagaInstance {
+                                instance_id: saga_id.clone(),
+                                saga_type: saga_type.clone(),
+                                current_step: 0,
+                                state: SagaInstanceState::Running,
+                                completed_steps: Vec::new(),
+                                started_at_ns: workflow_event.timestamp_ns,
+                                updated_at_ns: workflow_event.timestamp_ns,
+                            },
+                        );
+                    }
+                    SystemEvent::SagaStepCompleted { saga_id, step_index } => {
+                        if let Some(instance) = instances.get_mut(saga_id) {
+                            instance.completed_steps.push(instance.current_step);
+                            instance.current_step = *step_index;
+                            instance.updated_at_ns = workflow_event.timestamp_ns;
+                        }
+                    }
+                    SystemEvent::SagaCompensated { saga_id, compensated_steps: _ } => {
+                        if let Some(instance) = instances.get_mut(saga_id) {
+                            instance.state = SagaInstanceState::Compensating;
+                            instance.updated_at_ns = workflow_event.timestamp_ns;
+                        }
+                    }
+                    SystemEvent::SagaCompleted { saga_id } => {
+                        if let Some(instance) = instances.get_mut(saga_id) {
+                            instance.state = SagaInstanceState::Completed;
+                            instance.updated_at_ns = workflow_event.timestamp_ns;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        let count = instances.len();
+        let mut write_instances = self.instances.write().await;
+        for (id, instance) in instances {
+            write_instances.insert(id, instance);
+        }
+
+        if count > 0 {
+            tracing::info!(count = count, "Restored saga instances from journal");
+        }
+        Ok(())
+    }
 }

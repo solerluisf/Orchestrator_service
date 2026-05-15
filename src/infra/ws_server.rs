@@ -5,11 +5,33 @@ use axum::{
 };
 use futures::{SinkExt, StreamExt};
 use std::net::SocketAddr;
+use std::sync::Arc;
+use tokio::sync::broadcast;
 
-pub async fn run_ws_server(addr: SocketAddr) -> anyhow::Result<()> {
+pub struct TelemetryBroadcaster {
+    tx: broadcast::Sender<String>,
+}
+
+impl TelemetryBroadcaster {
+    pub fn new(capacity: usize) -> Arc<Self> {
+        let (tx, _) = broadcast::channel(capacity);
+        Arc::new(Self { tx })
+    }
+
+    pub fn subscribe(&self) -> broadcast::Receiver<String> {
+        self.tx.subscribe()
+    }
+
+    pub fn broadcast(&self, message: String) {
+        let _ = self.tx.send(message);
+    }
+}
+
+pub async fn run_ws_server(addr: SocketAddr, broadcaster: Arc<TelemetryBroadcaster>) -> anyhow::Result<()> {
     let app = axum::Router::new()
         .route("/ws/telemetry", axum::routing::get(ws_handler))
-        .layer(tower_http::cors::CorsLayer::permissive());
+        .layer(tower_http::cors::CorsLayer::permissive())
+        .with_state(broadcaster);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!("WebSocket server listening on {}", addr);
@@ -17,46 +39,63 @@ pub async fn run_ws_server(addr: SocketAddr) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn ws_handler(ws: WebSocketUpgrade) -> impl IntoResponse {
-    ws.on_upgrade(handle_socket)
+async fn ws_handler(
+    ws: WebSocketUpgrade,
+    axum::extract::State(broadcaster): axum::extract::State<Arc<TelemetryBroadcaster>>,
+) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| handle_socket(socket, broadcaster))
 }
 
-async fn handle_socket(socket: WebSocket) {
+async fn handle_socket(socket: WebSocket, broadcaster: Arc<TelemetryBroadcaster>) {
     let (mut sender, mut receiver) = socket.split();
+    let mut rx = broadcaster.subscribe();
 
-    // Send initial state
-    let init_msg = serde_json::json!({
+    // Send welcome message
+    let welcome = serde_json::json!({
         "topic": "connected",
         "message": "Connected to Orchestrator telemetry",
-        "ts": std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs(),
+        "ts": now_nanos(),
     });
-
-    if sender
-        .send(Message::Text(init_msg.to_string().into()))
-        .await
-        .is_err()
-    {
+    if sender.send(Message::Text(welcome.to_string().into())).await.is_err() {
         return;
     }
 
-    // Handle client messages (subscriptions)
-    while let Some(msg) = receiver.next().await {
-        match msg {
-            Ok(Message::Text(text)) => {
-                if let Ok(subscribe_msg) = serde_json::from_str::<serde_json::Value>(&text) {
-                    if let Some(topics) = subscribe_msg.get("subscribe") {
-                        tracing::debug!(topics = ?topics, "Client subscribed to topics");
+    // Spawn task to forward broadcast messages to this client
+    let mut send_task = tokio::spawn(async move {
+        while let Ok(msg) = rx.recv().await {
+            if sender.send(Message::Text(msg.into())).await.is_err() {
+                break;
+            }
+        }
+    });
+
+    // Handle incoming messages from client (subscriptions, etc.)
+    let mut recv_task = tokio::spawn(async move {
+        while let Some(Ok(msg)) = receiver.next().await {
+            match msg {
+                Message::Text(text) => {
+                    if let Ok(sub_msg) = serde_json::from_str::<serde_json::Value>(&text) {
+                        tracing::debug!(topics = ?sub_msg.get("subscribe"), "Client subscription");
                     }
                 }
+                Message::Close(_) => break,
+                _ => {}
             }
-            Ok(Message::Close(_)) => break,
-            Err(_) => break,
-            _ => {}
         }
+    });
+
+    // Wait for either task to finish
+    tokio::select! {
+        _ = &mut send_task => recv_task.abort(),
+        _ = &mut recv_task => send_task.abort(),
     }
 
     tracing::debug!("WebSocket client disconnected");
+}
+
+fn now_nanos() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos() as u64
 }
