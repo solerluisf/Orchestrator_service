@@ -13,8 +13,8 @@ mod chaos_tests {
     use orchestrator_service::core::domain::policy::PolicyParameters;
     use orchestrator_service::core::domain::workflow::{WorkflowDefinition, WorkflowStepDef, WorkflowAction};
     use orchestrator_service::core::domain::saga::{SagaDefinition, SagaStepDef};
-    use orchestrator_service::adapters::persistence::journal_adapter::AppendOnlyJournalAdapter;
     use orchestrator_service::core::ports::journal_port::IJournalPort;
+    use orchestrator_service::adapters::persistence::journal_adapter::AppendOnlyJournalAdapter;
     use std::time::Instant;
 
     fn make_journal(dir: &str) -> Arc<AppendOnlyJournalAdapter> {
